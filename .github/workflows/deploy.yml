@@ -46,7 +46,7 @@ jobs:
               --function-name "$FUNCTION_NAME" \
               --runtime "$RUNTIME" \
               --handler "$HANDLER" \
-              --role arn:aws:iam::472938441939:role/lambda_deploy_role \
+              --role arn:aws:iam::472938441939:role/lambda_execution_role \
               --zip-file fileb://lambda.zip
           fi
 
