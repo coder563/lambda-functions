@@ -1,11 +1,11 @@
-name: Deploy Lambda (Serverless)
+name: Deploy Lambda (raw AWS CLI)
 
 on:
   push:
     branches: [ "main" ]
 
 permissions:
-  id-token: write     # Required for OIDC
+  id-token: write    # OIDC
   contents: read
 
 jobs:
@@ -13,9 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-west-2
+      FUNCTION_NAME: my-lambda-fn
+      RUNTIME: python3.12
+      HANDLER: lambda_function.handler
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials via OIDC
@@ -24,15 +27,33 @@ jobs:
           role-to-assume: arn:aws:iam::472938441939:role/lambda_deploy_role
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Use Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Serverless Framework
+      - name: Package Lambda
         run: |
-          npm install -g serverless
-          npm install
+          set -euxo pipefail
+          rm -rf build lambda.zip
+          mkdir -p build
+          cp -v lambda_function.py build/
+          if [ -f requirements.txt ]; then
+            python3 -m pip install -r requirements.txt -t build/
+          fi
+          (cd build && zip -r ../lambda.zip .)
 
-      - name: Deploy with Serverless
-        run: sls deploy --stage prod --region eu-west-2
+      - name: Create function if missing
+        run: |
+          set -euxo pipefail
+          if ! aws lambda get-function --function-name "$FUNCTION_NAME" >/dev/null 2>&1; then
+            aws lambda create-function \
+              --function-name "$FUNCTION_NAME" \
+              --runtime "$RUNTIME" \
+              --handler "$HANDLER" \
+              --role arn:aws:iam::472938441939:role/lambda_deploy_role \
+              --zip-file fileb://lambda.zip
+          fi
+
+      - name: Update function code
+        run: |
+          set -euxo pipefail
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://lambda.zip \
+            --publish
