@@ -12,7 +12,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: eu-west-2
+      AWS_REGION: us-east-1
       FUNCTION_NAME: my-lambda-fn
       RUNTIME: python3.12
       HANDLER: lambda_function.handler
