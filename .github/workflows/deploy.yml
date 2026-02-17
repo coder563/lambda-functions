@@ -89,14 +89,7 @@ jobs:
             --function-name your-function-name \
             --layers ${{ steps.publish_layer.outputs.layer_arn }} \
             --region eu-west-2
-```
-
-Slot these in between your **Configure AWS Credentials** and **Package Lambda** steps. Replace `your-function-name` with your actual function name.
-
-And create the `layers/requirements.txt` file in your repo with:
-```
-requests
-
+            
       - name: Package Lambda
         run: |
           set -euxo pipefail
