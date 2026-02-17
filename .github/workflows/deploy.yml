@@ -55,7 +55,7 @@ jobs:
       - name: Attach layer to function
         run: |
           aws lambda update-function-configuration \
-            --function-name lambda_function \
+            --function-name "$FUNCTION_NAME" \
             --layers ${{ steps.publish_layer.outputs.layer_arn }} \
             --region us-east-1
   
