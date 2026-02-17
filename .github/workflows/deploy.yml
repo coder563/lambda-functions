@@ -64,7 +64,7 @@ jobs:
           set -euxo pipefail
           rm -rf build lambda.zip
           mkdir -p build
-          cp -v lambda_function.py build/
+          cp -v src/lambda_function.py build/
           if [ -f requirements.txt ]; then
             python3 -m pip install -r requirements.txt -t build/
           fi
