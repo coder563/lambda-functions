@@ -47,7 +47,7 @@ jobs:
             --layer-name requests-layer \
             --zip-file fileb://requests-layer.zip \
             --compatible-runtimes python3.11 python3.12 \
-            --region eu-west-2 \
+            --region us-east-1 \
             --query 'LayerVersionArn' \
             --output text)
           echo "layer_arn=$LAYER_ARN" >> $GITHUB_OUTPUT
@@ -57,39 +57,8 @@ jobs:
           aws lambda update-function-configuration \
             --function-name your-function-name \
             --layers ${{ steps.publish_layer.outputs.layer_arn }} \
-            --region eu-west-2
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install layer dependencies
-        run: |
-          mkdir -p layers/python
-          pip install -r layers/requirements.txt -t layers/python/
-
-      - name: Package layer
-        run: cd layers && zip -r ../requests-layer.zip python/
-
-      - name: Publish layer
-        id: publish_layer
-        run: |
-          LAYER_ARN=$(aws lambda publish-layer-version \
-            --layer-name requests-layer \
-            --zip-file fileb://requests-layer.zip \
-            --compatible-runtimes python3.11 python3.12 \
-            --region eu-west-2 \
-            --query 'LayerVersionArn' \
-            --output text)
-          echo "layer_arn=$LAYER_ARN" >> $GITHUB_OUTPUT
-
-      - name: Attach layer to function
-        run: |
-          aws lambda update-function-configuration \
-            --function-name your-function-name \
-            --layers ${{ steps.publish_layer.outputs.layer_arn }} \
-            --region eu-west-2
-            
+            --region us-east-1
+  
       - name: Package Lambda
         run: |
           set -euxo pipefail
