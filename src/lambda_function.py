@@ -5,5 +5,5 @@ def handler(event, context):
     return {
         'statusCode': 200,
         'body': 'Hello, This is my Lambda function!'
-        'response_body': response.json()
+        'response_body': response.text
     }
