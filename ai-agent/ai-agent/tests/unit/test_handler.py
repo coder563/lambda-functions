@@ -1,72 +1,91 @@
 import json
-
 import pytest
+from unittest.mock import MagicMock, patch
 
-from hello_world import app
+# Import your Lambda handler
+from hello_world.app import lambda_handler
 
 
-@pytest.fixture()
-def apigw_event():
-    """ Generates API GW Event"""
-
-    return {
-        "body": '{ "test": "body"}',
-        "resource": "/{proxy+}",
-        "requestContext": {
-            "resourceId": "123456",
-            "apiId": "1234567890",
-            "resourcePath": "/{proxy+}",
-            "httpMethod": "POST",
-            "requestId": "c6af9ac6-7b61-11e6-9a41-93e8deadbeef",
-            "accountId": "123456789012",
-            "identity": {
-                "apiKey": "",
-                "userArn": "",
-                "cognitoAuthenticationType": "",
-                "caller": "",
-                "userAgent": "Custom User Agent String",
-                "user": "",
-                "cognitoIdentityPoolId": "",
-                "cognitoIdentityId": "",
-                "cognitoAuthenticationProvider": "",
-                "sourceIp": "127.0.0.1",
-                "accountId": "",
-            },
-            "stage": "prod",
-        },
-        "queryStringParameters": {"foo": "bar"},
-        "headers": {
-            "Via": "1.1 08f323deadbeefa7af34d5feb414ce27.cloudfront.net (CloudFront)",
-            "Accept-Language": "en-US,en;q=0.8",
-            "CloudFront-Is-Desktop-Viewer": "true",
-            "CloudFront-Is-SmartTV-Viewer": "false",
-            "CloudFront-Is-Mobile-Viewer": "false",
-            "X-Forwarded-For": "127.0.0.1, 127.0.0.2",
-            "CloudFront-Viewer-Country": "US",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Upgrade-Insecure-Requests": "1",
-            "X-Forwarded-Port": "443",
-            "Host": "1234567890.execute-api.us-east-1.amazonaws.com",
-            "X-Forwarded-Proto": "https",
-            "X-Amz-Cf-Id": "aaaaaaaaaae3VYQb9jd-nvCd-de396Uhbp027Y2JvkCPNLmGJHqlaA==",
-            "CloudFront-Is-Tablet-Viewer": "false",
-            "Cache-Control": "max-age=0",
-            "User-Agent": "Custom User Agent String",
-            "CloudFront-Forwarded-Proto": "https",
-            "Accept-Encoding": "gzip, deflate, sdch",
-        },
-        "pathParameters": {"proxy": "/examplepath"},
-        "httpMethod": "POST",
-        "stageVariables": {"baz": "qux"},
-        "path": "/examplepath",
+def test_handler_returns_200():
+    """Lambda should always return a 200 status code"""
+    mock_response_body = {
+        "content": [{"text": "An AI agent is a system that perceives its environment and takes actions."}]
     }
 
+    with patch("hello_world.app.boto3.client") as mock_client:
+        # Mock the Bedrock response
+        mock_bedrock = MagicMock()
+        mock_bedrock.invoke_model.return_value = {
+            "body": MagicMock(read=lambda: json.dumps(mock_response_body).encode())
+        }
+        mock_client.return_value = mock_bedrock
 
-def test_lambda_handler(apigw_event):
+        event = {"prompt": "What is an AI agent?"}
+        response = lambda_handler(event, None)
 
-    ret = app.lambda_handler(apigw_event, "")
-    data = json.loads(ret["body"])
+        assert response["statusCode"] == 200
 
-    assert ret["statusCode"] == 200
-    assert "message" in ret["body"]
-    assert data["message"] == "hello world"
+
+def test_handler_returns_text_response():
+    """Lambda should return Claude's text in the body"""
+    expected_text = "An AI agent is a system that perceives its environment and takes actions."
+    mock_response_body = {
+        "content": [{"text": expected_text}]
+    }
+
+    with patch("hello_world.app.boto3.client") as mock_client:
+        mock_bedrock = MagicMock()
+        mock_bedrock.invoke_model.return_value = {
+            "body": MagicMock(read=lambda: json.dumps(mock_response_body).encode())
+        }
+        mock_client.return_value = mock_bedrock
+
+        event = {"prompt": "What is an AI agent?"}
+        response = lambda_handler(event, None)
+
+        assert response["body"] == expected_text
+
+
+def test_handler_uses_default_prompt():
+    """Lambda should use a default prompt if none is provided"""
+    mock_response_body = {
+        "content": [{"text": "Hello!"}]
+    }
+
+    with patch("hello_world.app.boto3.client") as mock_client:
+        mock_bedrock = MagicMock()
+        mock_bedrock.invoke_model.return_value = {
+            "body": MagicMock(read=lambda: json.dumps(mock_response_body).encode())
+        }
+        mock_client.return_value = mock_bedrock
+
+        # No prompt in event
+        event = {}
+        response = lambda_handler(event, None)
+
+        assert response["statusCode"] == 200
+
+
+def test_handler_sends_prompt_to_bedrock():
+    """Lambda should pass the prompt from the event to Bedrock"""
+    mock_response_body = {
+        "content": [{"text": "Some response"}]
+    }
+
+    with patch("hello_world.app.boto3.client") as mock_client:
+        mock_bedrock = MagicMock()
+        mock_bedrock.invoke_model.return_value = {
+            "body": MagicMock(read=lambda: json.dumps(mock_response_body).encode())
+        }
+        mock_client.return_value = mock_bedrock
+
+        event = {"prompt": "What is an AI agent?"}
+        lambda_handler(event, None)
+
+        # Confirm invoke_model was called
+        mock_bedrock.invoke_model.assert_called_once()
+
+        # Confirm the prompt made it into the Bedrock request body
+        call_args = mock_bedrock.invoke_model.call_args
+        body = json.loads(call_args.kwargs["body"])
+        assert body["messages"][0]["content"] == "What is an AI agent?"

@@ -1,0 +1,1 @@
+print((lambda: "Hello, world!")())
