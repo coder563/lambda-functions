@@ -1,91 +1,55 @@
-name: Deploy Lambda (raw AWS CLI)
+name: Deploy to AWS Lambda
 
 on:
   push:
-    branches: [ "main" ]
-
-permissions:
-  id-token: write    # OIDC
-  contents: read
+    branches:
+      - main
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: us-east-1
-      FUNCTION_NAME: my-lambda-fn
-      RUNTIME: python3.12
-      HANDLER: lambda_function.handler
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::472938441939:role/lambda_deploy_role
-          aws-region: ${{ env.AWS_REGION }}
-      
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.12'
 
-      - name: Install layer dependencies
+      - name: Install dependencies
         run: |
-          mkdir -p layers/python
-          pip install -r layers/requirements.txt -t layers/python/
+          pip install pytest boto3 moto
 
-      - name: Package layer
-        run: cd layers && zip -r ../requests-layer.zip python/
+      - name: Run tests
+        working-directory: ai-agent/ai-agent
+        run: |
+          python3 -m pytest tests/unit/ -v
 
-      - name: Publish layer
-        id: publish_layer
-        run: |
-          LAYER_ARN=$(aws lambda publish-layer-version \
-            --layer-name requests-layer \
-            --zip-file fileb://requests-layer.zip \
-            --compatible-runtimes python3.11 python3.12 \
-            --region us-east-1 \
-            --query 'LayerVersionArn' \
-            --output text)
-          echo "layer_arn=$LAYER_ARN" >> $GITHUB_OUTPUT
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Attach layer to function
-        run: |
-          aws lambda update-function-configuration \
-            --function-name "$FUNCTION_NAME" \
-            --layers ${{ steps.publish_layer.outputs.layer_arn }} \
-            --region us-east-1
-  
-      - name: Package Lambda
-        run: |
-          set -euxo pipefail
-          rm -rf build lambda.zip
-          mkdir -p build
-          cp -v src/lambda_function.py build/
-          if [ -f requirements.txt ]; then
-            python3 -m pip install -r requirements.txt -t build/
-          fi
-          (cd build && zip -r ../lambda.zip .)
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
 
-      - name: Create function if missing
-        run: |
-          set -euxo pipefail
-          if ! aws lambda get-function --function-name "$FUNCTION_NAME" >/dev/null 2>&1; then
-            aws lambda create-function \
-              --function-name "$FUNCTION_NAME" \
-              --runtime "$RUNTIME" \
-              --handler "$HANDLER" \
-              --role arn:aws:iam::472938441939:role/lambda_execution_role \
-              --zip-file fileb://lambda.zip
-          fi
+      - name: Set up SAM
+        uses: aws-actions/setup-sam@v2
 
-      - name: Update function code
-        run: |
-          set -euxo pipefail
-          aws lambda update-function-code \
-            --function-name "$FUNCTION_NAME" \
-            --zip-file fileb://lambda.zip \
-            --publish
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Build
+        working-directory: ai-agent/ai-agent
+        run: sam build
+
+      - name: Deploy
+        working-directory: ai-agent/ai-agent
+        run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset

@@ -1,7 +1,6 @@
 import json
+import os
 import boto3
-
-# import requests
 
 
 def lambda_handler(event, context):
@@ -26,32 +25,43 @@ def lambda_handler(event, context):
         Return doc: https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
     """
 
-    # try:
-    #     ip = requests.get("http://checkip.amazonaws.com/")
-    # except requests.RequestException as e:
-    #     # Send some context about this error to Lambda Logs
-    #     print(e)
+    session_id = event.get("session_id")
+    message = event.get("message", event.get("prompt", "Say hello in one sentence."))
 
-    #     raise e
-    prompt = event.get("prompt", "Say hello in one sentence.")
-    # create a Bedrock client
+    # Load existing history from DynamoDB if a session is provided
+    history = []
+    dynamodb_table = os.environ.get("DYNAMODB_TABLE")
+    table = None
+    if session_id and dynamodb_table:
+        dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
+        table = dynamodb.Table(dynamodb_table)
+        result = table.get_item(Key={"session_id": session_id})
+        if "Item" in result:
+            history = result["Item"].get("history", [])
+
+    messages = history + [{"role": "user", "content": message}]
+
     client = boto3.client("bedrock-runtime", region_name="us-east-1")
-
-    #Call Claude 2 with the prompt
     response = client.invoke_model(
         modelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
         body=json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 512,
-            "messages": [
-                { "role": "user", "content": prompt }
-            ]                
+            "messages": messages
         })
     )
     response_body = json.loads(response["body"].read())
     answer = response_body["content"][0]["text"]
+
+    # Save updated history to DynamoDB
+    if session_id and dynamodb_table and table is not None:
+        table.put_item(Item={
+            "session_id": session_id,
+            "history": messages + [{"role": "assistant", "content": answer}]
+        })
+
     return {
         "statusCode": 200,
         "body": answer
-        }
-    
+    }
+
