@@ -3,6 +3,34 @@ import os
 import boto3
 
 
+TOOLS = [
+    {
+        "name": "get_weather",
+        "description": "Get the current weather for a given location.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "The city to get weather for, e.g. London"
+                }
+            },
+            "required": ["location"]
+        }
+    }
+]
+
+
+def get_weather(location):
+    return f"The weather in {location} is sunny and 22°C."
+
+
+def execute_tool(tool_name, tool_input):
+    if tool_name == "get_weather":
+        return get_weather(tool_input["location"])
+    raise ValueError(f"Unknown tool: {tool_name}")
+
+
 def lambda_handler(event, context):
     session_id = event.get("session_id")
     message = event.get("message") or event.get("prompt")
@@ -21,16 +49,46 @@ def lambda_handler(event, context):
     messages = history + [{"role": "user", "content": message}]
 
     client = boto3.client("bedrock-runtime", region_name="us-east-1")
+
     response = client.invoke_model(
         modelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
         body=json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 512,
+            "tools": TOOLS,
             "messages": messages
         })
     )
     response_body = json.loads(response["body"].read())
-    answer = response_body["content"][0]["text"]
+
+    # If Claude wants to use a tool, execute it and call Bedrock again
+    if response_body.get("stop_reason") == "tool_use":
+        tool_use_block = next(b for b in response_body["content"] if b["type"] == "tool_use")
+        tool_result = execute_tool(tool_use_block["name"], tool_use_block["input"])
+
+        messages = messages + [
+            {"role": "assistant", "content": response_body["content"]},
+            {"role": "user", "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_block["id"],
+                    "content": tool_result
+                }
+            ]}
+        ]
+
+        response = client.invoke_model(
+            modelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 512,
+                "tools": TOOLS,
+                "messages": messages
+            })
+        )
+        response_body = json.loads(response["body"].read())
+
+    answer = next(b["text"] for b in response_body["content"] if b["type"] == "text")
 
     # Save updated history to DynamoDB
     if session_id and dynamodb_table and table is not None:
