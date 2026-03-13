@@ -2,6 +2,7 @@ import json
 import os
 import boto3
 
+MAX_ITERATIONS = 10
 
 TOOLS = [
     {
@@ -50,33 +51,8 @@ def lambda_handler(event, context):
 
     client = boto3.client("bedrock-runtime", region_name="us-east-1")
 
-    response = client.invoke_model(
-        modelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-        body=json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 512,
-            "tools": TOOLS,
-            "messages": messages
-        })
-    )
-    response_body = json.loads(response["body"].read())
-
-    # If Claude wants to use a tool, execute it and call Bedrock again
-    if response_body.get("stop_reason") == "tool_use":
-        tool_use_block = next(b for b in response_body["content"] if b["type"] == "tool_use")
-        tool_result = execute_tool(tool_use_block["name"], tool_use_block["input"])
-
-        messages = messages + [
-            {"role": "assistant", "content": response_body["content"]},
-            {"role": "user", "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_block["id"],
-                    "content": tool_result
-                }
-            ]}
-        ]
-
+    # Agent loop — keep going until end_turn or max iterations reached
+    for _ in range(MAX_ITERATIONS):
         response = client.invoke_model(
             modelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
             body=json.dumps({
@@ -88,16 +64,31 @@ def lambda_handler(event, context):
         )
         response_body = json.loads(response["body"].read())
 
-    answer = next(b["text"] for b in response_body["content"] if b["type"] == "text")
+        if response_body.get("stop_reason") == "end_turn":
+            answer = next(b["text"] for b in response_body["content"] if b["type"] == "text")
 
-    # Save updated history to DynamoDB
-    if session_id and dynamodb_table and table is not None:
-        table.put_item(Item={
-            "session_id": session_id,
-            "history": messages + [{"role": "assistant", "content": answer}]
-        })
+            # Save updated history to DynamoDB
+            if session_id and dynamodb_table and table is not None:
+                table.put_item(Item={
+                    "session_id": session_id,
+                    "history": messages + [{"role": "assistant", "content": answer}]
+                })
 
-    return {
-        "statusCode": 200,
-        "body": answer
-    }
+            return {"statusCode": 200, "body": answer}
+
+        if response_body.get("stop_reason") == "tool_use":
+            tool_use_block = next(b for b in response_body["content"] if b["type"] == "tool_use")
+            tool_result = execute_tool(tool_use_block["name"], tool_use_block["input"])
+
+            messages = messages + [
+                {"role": "assistant", "content": response_body["content"]},
+                {"role": "user", "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_block["id"],
+                        "content": tool_result
+                    }
+                ]}
+            ]
+
+    return {"statusCode": 500, "body": "Agent loop exceeded max iterations"}
