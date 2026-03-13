@@ -1,5 +1,6 @@
 import json
 import os
+import datetime
 import boto3
 
 MAX_ITERATIONS = 10
@@ -18,6 +19,28 @@ TOOLS = [
             },
             "required": ["location"]
         }
+    },
+    {
+        "name": "calculator",
+        "description": "Evaluate a mathematical expression and return the result.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "A mathematical expression to evaluate, e.g. '2 + 2' or '10 * 5'"
+                }
+            },
+            "required": ["expression"]
+        }
+    },
+    {
+        "name": "get_current_time",
+        "description": "Get the current date and time.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
     }
 ]
 
@@ -26,9 +49,25 @@ def get_weather(location):
     return f"The weather in {location} is sunny and 22°C."
 
 
+def calculator(expression):
+    try:
+        result = eval(expression, {"__builtins__": {}}, {})
+        return str(result)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def get_current_time():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def execute_tool(tool_name, tool_input):
     if tool_name == "get_weather":
         return get_weather(tool_input["location"])
+    if tool_name == "calculator":
+        return calculator(tool_input["expression"])
+    if tool_name == "get_current_time":
+        return get_current_time()
     raise ValueError(f"Unknown tool: {tool_name}")
 
 
