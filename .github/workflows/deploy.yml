@@ -18,7 +18,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pytest boto3 moto
+          pip install pytest boto3 moto langchain langchain-aws langgraph
 
       - name: Run tests
         working-directory: ai-agent/ai-agent
