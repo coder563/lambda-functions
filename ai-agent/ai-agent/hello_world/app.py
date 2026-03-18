@@ -71,26 +71,24 @@ def execute_tool(tool_name, tool_input):
     raise ValueError(f"Unknown tool: {tool_name}")
 
 
-def lambda_handler(event, context):
-    session_id = event.get("session_id")
-    message = event.get("message") or event.get("prompt")
+def load_history(session_id, dynamodb_table):
+    if not session_id or not dynamodb_table:
+        return [], None
+    dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
+    table = dynamodb.Table(dynamodb_table)
+    result = table.get_item(Key={"session_id": session_id})
+    history = result["Item"].get("history", []) if "Item" in result else []
+    return history, table
 
-    # Load existing history from DynamoDB if a session is provided
-    history = []
-    dynamodb_table = os.environ.get("DYNAMODB_TABLE")
-    table = None
-    if session_id and dynamodb_table:
-        dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
-        table = dynamodb.Table(dynamodb_table)
-        result = table.get_item(Key={"session_id": session_id})
-        if "Item" in result:
-            history = result["Item"].get("history", [])
 
-    messages = history + [{"role": "user", "content": message}]
+def save_history(table, session_id, messages, answer):
+    table.put_item(Item={
+        "session_id": session_id,
+        "history": messages + [{"role": "assistant", "content": answer}]
+    })
 
-    client = boto3.client("bedrock-runtime", region_name="us-east-1")
 
-    # Agent loop — keep going until end_turn or max iterations reached
+def run_agent(messages, client):
     for _ in range(MAX_ITERATIONS):
         response = client.invoke_model(
             modelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -105,20 +103,11 @@ def lambda_handler(event, context):
 
         if response_body.get("stop_reason") == "end_turn":
             answer = next(b["text"] for b in response_body["content"] if b["type"] == "text")
-
-            # Save updated history to DynamoDB
-            if session_id and dynamodb_table and table is not None:
-                table.put_item(Item={
-                    "session_id": session_id,
-                    "history": messages + [{"role": "assistant", "content": answer}]
-                })
-
-            return {"statusCode": 200, "body": answer}
+            return answer, messages
 
         if response_body.get("stop_reason") == "tool_use":
             tool_use_block = next(b for b in response_body["content"] if b["type"] == "tool_use")
             tool_result = execute_tool(tool_use_block["name"], tool_use_block["input"])
-
             messages = messages + [
                 {"role": "assistant", "content": response_body["content"]},
                 {"role": "user", "content": [
@@ -130,4 +119,23 @@ def lambda_handler(event, context):
                 ]}
             ]
 
-    return {"statusCode": 500, "body": "Agent loop exceeded max iterations"}
+    return None, messages
+
+
+def lambda_handler(event, context):
+    session_id = event.get("session_id")
+    message = event.get("message") or event.get("prompt")
+
+    history, table = load_history(session_id, os.environ.get("DYNAMODB_TABLE"))
+    messages = history + [{"role": "user", "content": message}]
+
+    client = boto3.client("bedrock-runtime", region_name="us-east-1")
+    answer, messages = run_agent(messages, client)
+
+    if answer is None:
+        return {"statusCode": 500, "body": "Agent loop exceeded max iterations"}
+
+    if table is not None:
+        save_history(table, session_id, messages, answer)
+
+    return {"statusCode": 200, "body": answer}
