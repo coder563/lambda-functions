@@ -1,4 +1,5 @@
 import json
+import logging
 import pytest
 from unittest.mock import MagicMock, patch
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
@@ -137,3 +138,71 @@ def test_checkpointed_graph_different_threads_are_isolated():
 
         last = next(m for m in reversed(result["messages"]) if isinstance(m, AIMessage))
         assert "Alice" not in last.content
+
+
+# --- Test 7: llm_call event is logged ---
+def test_llm_call_is_logged():
+    with patch("hello_world.agent_graph.ChatBedrock") as mock_chat:
+        mock_llm = MagicMock()
+        mock_chat.return_value = mock_llm
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.invoke.return_value = AIMessage(content="Hello!")
+
+        from hello_world.agent_graph import build_graph
+        import hello_world.agent_graph as ag
+        graph = build_graph()
+
+        with patch.object(ag.logger, "info") as mock_log:
+            graph.invoke({"messages": [HumanMessage(content="Hi")]})
+            logged = [json.loads(c.args[0]) for c in mock_log.call_args_list]
+            events = [e["event"] for e in logged]
+            assert "llm_call" in events
+
+
+# --- Test 8: tool_call event is logged with tool name and args ---
+def test_tool_call_is_logged():
+    with patch("hello_world.agent_graph.ChatBedrock") as mock_chat:
+        mock_llm = MagicMock()
+        mock_chat.return_value = mock_llm
+        mock_llm.bind_tools.return_value = mock_llm
+
+        tool_call = {"name": "get_weather_tool", "args": {"location": "Paris"}, "id": "tc_002", "type": "tool_call"}
+        mock_llm.invoke.side_effect = [
+            AIMessage(content="", tool_calls=[tool_call]),
+            AIMessage(content="Sunny in Paris."),
+        ]
+
+        from hello_world.agent_graph import build_graph
+        import hello_world.agent_graph as ag
+        graph = build_graph()
+
+        with patch.object(ag.logger, "info") as mock_log:
+            graph.invoke({"messages": [HumanMessage(content="Weather in Paris?")]})
+            logged = [json.loads(c.args[0]) for c in mock_log.call_args_list]
+            tool_logs = [e for e in logged if e["event"] == "tool_call"]
+            assert len(tool_logs) == 1
+            assert tool_logs[0]["tool"] == "get_weather_tool"
+            assert tool_logs[0]["args"] == {"location": "Paris"}
+
+
+# --- Test 9: agent_complete event is logged by graph_handler ---
+def test_agent_complete_is_logged():
+    with patch("hello_world.agent_graph.ChatBedrock") as mock_chat, \
+         patch("hello_world.agent_graph.load_history") as mock_load, \
+         patch("hello_world.agent_graph.save_history"):
+
+        mock_llm = MagicMock()
+        mock_chat.return_value = mock_llm
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.invoke.return_value = AIMessage(content="Done.")
+        mock_load.return_value = ([], None)
+
+        from hello_world.agent_graph import graph_handler
+        import hello_world.agent_graph as ag
+
+        with patch.object(ag.logger, "info") as mock_log:
+            graph_handler({"message": "Do something."}, None)
+            logged = [json.loads(c.args[0]) for c in mock_log.call_args_list]
+            events = [e["event"] for e in logged]
+            assert "agent_start" in events
+            assert "agent_complete" in events
