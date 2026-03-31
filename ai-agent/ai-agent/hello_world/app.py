@@ -1,9 +1,12 @@
 import json
 import os
 import datetime
+import time
 import boto3
+from botocore.exceptions import ClientError
 
 MAX_ITERATIONS = 10
+MAX_RETRIES = 3
 
 TOOLS = [
     {
@@ -90,15 +93,22 @@ def save_history(table, session_id, messages, answer):
 
 def run_agent(messages, client):
     for _ in range(MAX_ITERATIONS):
-        response = client.invoke_model(
-            modelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 512,
-                "tools": TOOLS,
-                "messages": messages
-            })
-        )
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = client.invoke_model(
+                    modelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+                    body=json.dumps({
+                        "anthropic_version": "bedrock-2023-05-31",
+                        "max_tokens": 512,
+                        "tools": TOOLS,
+                        "messages": messages
+                    })
+                )
+                break
+            except ClientError as e:
+                if attempt == MAX_RETRIES - 1:
+                    raise
+                time.sleep(2 ** attempt)
         response_body = json.loads(response["body"].read())
 
         if response_body.get("stop_reason") == "end_turn":
@@ -119,21 +129,21 @@ def run_agent(messages, client):
                 ]}
             ]
 
-    return None, messages
+    return "I wasn't able to complete your request — the agent exceeded the maximum number of steps. Please try rephrasing your question.", messages
 
 
 def lambda_handler(event, context):
     session_id = event.get("session_id")
     message = event.get("message") or event.get("prompt")
 
+    if not message or not message.strip():
+        return {"statusCode": 400, "body": "message is required"}
+
     history, table = load_history(session_id, os.environ.get("DYNAMODB_TABLE"))
     messages = history + [{"role": "user", "content": message}]
 
     client = boto3.client("bedrock-runtime", region_name="us-east-1")
     answer, messages = run_agent(messages, client)
-
-    if answer is None:
-        return {"statusCode": 500, "body": "Agent loop exceeded max iterations"}
 
     if table is not None:
         save_history(table, session_id, messages, answer)

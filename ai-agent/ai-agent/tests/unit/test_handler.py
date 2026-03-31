@@ -47,23 +47,12 @@ def test_handler_returns_text_response():
 
 
 def test_handler_uses_default_prompt():
-    """Lambda should use a default prompt if none is provided"""
-    mock_response_body = {
-        "stop_reason": "end_turn",
-        "content": [{"type": "text", "text": "Hello!"}]
-    }
+    """Lambda should return 400 if no message is provided"""
+    event = {}
+    response = lambda_handler(event, None)
 
-    with patch("hello_world.app.boto3.client") as mock_client:
-        mock_bedrock = MagicMock()
-        mock_bedrock.invoke_model.return_value = {
-            "body": MagicMock(read=lambda: json.dumps(mock_response_body).encode())
-        }
-        mock_client.return_value = mock_bedrock
-
-        event = {}
-        response = lambda_handler(event, None)
-
-        assert response["statusCode"] == 200
+    assert response["statusCode"] == 400
+    assert "message is required" in response["body"]
 
 
 def test_handler_sends_prompt_to_bedrock():

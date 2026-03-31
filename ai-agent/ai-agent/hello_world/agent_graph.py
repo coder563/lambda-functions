@@ -10,7 +10,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from typing import Annotated
 from typing_extensions import TypedDict
 
-from hello_world.app import get_weather, calculator, get_current_time, load_history, save_history
+try:
+    from hello_world.app import get_weather, calculator, get_current_time, load_history, save_history
+except ModuleNotFoundError:
+    from app import get_weather, calculator, get_current_time, load_history, save_history
 from langchain_core.tools import tool as lc_tool
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,7 @@ def get_current_time_tool() -> str:
 
 TOOLS = [get_weather_tool, calculator_tool, get_current_time_tool]
 TOOL_MAP = {t.name: t for t in TOOLS}
+MAX_GRAPH_STEPS = 25
 
 
 class AgentState(TypedDict):
@@ -104,10 +108,13 @@ def graph_checkpointed_handler(event, context):
     thread_id = event.get("session_id") or "default"
     message = event.get("message") or event.get("prompt")
 
+    if not message or not message.strip():
+        return {"statusCode": 400, "body": "message is required"}
+
     logger.info(json.dumps({"event": "agent_start", "handler": "checkpointed", "session_id": thread_id, "message": message}))
     t0 = time.time()
 
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": MAX_GRAPH_STEPS}
     result = _checkpointed_graph.invoke(
         {"messages": [HumanMessage(content=message)]},
         config=config,
@@ -122,6 +129,9 @@ def graph_handler(event, context):
     session_id = event.get("session_id")
     message = event.get("message") or event.get("prompt")
 
+    if not message or not message.strip():
+        return {"statusCode": 400, "body": "message is required"}
+
     logger.info(json.dumps({"event": "agent_start", "handler": "manual", "session_id": session_id, "message": message}))
     t0 = time.time()
 
@@ -130,7 +140,7 @@ def graph_handler(event, context):
     messages = lc_history + [HumanMessage(content=message)]
 
     graph = build_graph()
-    result = graph.invoke({"messages": messages})
+    result = graph.invoke({"messages": messages}, {"recursion_limit": MAX_GRAPH_STEPS})
 
     last = next(m for m in reversed(result["messages"]) if isinstance(m, AIMessage))
     answer = last.content

@@ -62,4 +62,5 @@ def test_agent_loop_stops_at_max_iterations():
         response = lambda_handler(event, None)
 
         assert mock_bedrock.invoke_model.call_count <= 10
-        assert response["statusCode"] == 500
+        assert response["statusCode"] == 200
+        assert "maximum number of steps" in response["body"]
