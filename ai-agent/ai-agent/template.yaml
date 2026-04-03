@@ -33,6 +33,119 @@ Resources:
             Path: /hello
             Method: get
 
+  GraphAgentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: hello_world/
+      Handler: agent_graph.graph_handler
+      Runtime: python3.12
+      Timeout: 60
+      Policies:
+      - Statement:
+          - Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+            Resource: "*"
+      Architectures:
+        - x86_64
+
+  BedrockAgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockAgentPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt BedrockActionFunction.Arn
+
+  BedrockAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: ai-course-agent
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      AgentResourceRoleArn: !GetAtt BedrockAgentRole.Arn
+      Instruction: >
+        You are a helpful assistant. You can get the current weather for a location,
+        perform calculator operations, and retrieve the current time.
+        Use the available tools to answer the user's questions accurately.
+      ActionGroups:
+        - ActionGroupName: WeatherTools
+          ActionGroupExecutor:
+            Lambda: !GetAtt BedrockActionFunction.Arn
+          ApiSchema:
+            Payload: |
+              openapi: "3.0.0"
+              info:
+                title: Weather Tools API
+                version: "1.0"
+              paths:
+                /get-weather:
+                  get:
+                    summary: Get weather for a location
+                    operationId: getWeather
+                    parameters:
+                      - name: location
+                        in: query
+                        required: true
+                        schema:
+                          type: string
+                    responses:
+                      "200":
+                        description: Weather result
+                /calculator:
+                  get:
+                    summary: Evaluate a mathematical expression
+                    operationId: calculator
+                    parameters:
+                      - name: expression
+                        in: query
+                        required: true
+                        schema:
+                          type: string
+                    responses:
+                      "200":
+                        description: Calculation result
+                /get-current-time:
+                  get:
+                    summary: Get the current date and time
+                    operationId: getCurrentTime
+                    responses:
+                      "200":
+                        description: Current time
+
+  BedrockAgentLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt BedrockActionFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceArn: !GetAtt BedrockAgent.AgentArn
+
+  BedrockActionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: hello_world/
+      Handler: agent_bedrock.action_group_handler
+      Runtime: python3.12
+      Timeout: 30
+      Architectures:
+        - x86_64
+
 Outputs:
   # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
   # Find out more about other implicit resources you can reference within SAM
@@ -46,3 +159,12 @@ Outputs:
   HelloWorldFunctionIamRole:
     Description: "Implicit IAM Role created for Hello World function"
     Value: !GetAtt HelloWorldFunctionRole.Arn
+  GraphAgentFunction:
+    Description: "Graph Agent Lambda Function ARN"
+    Value: !GetAtt GraphAgentFunction.Arn
+  BedrockAgentId:
+    Description: "Bedrock Agent ID"
+    Value: !GetAtt BedrockAgent.AgentId
+  BedrockActionFunction:
+    Description: "Bedrock Action Group Lambda Function ARN"
+    Value: !GetAtt BedrockActionFunction.Arn
