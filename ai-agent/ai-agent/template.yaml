@@ -49,6 +49,92 @@ Resources:
       Architectures:
         - x86_64
 
+  KnowledgeBaseBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "ai-agent-kb-docs-${AWS::AccountId}"
+
+  KnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: KnowledgeBasePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt KnowledgeBaseBucket.Arn
+                  - !Sub "${KnowledgeBaseBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - aoss:APIAccessAll
+                Resource: "*"
+
+  KnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: ai-agent-knowledge-base
+      RoleArn: !GetAtt KnowledgeBaseRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+      StorageConfiguration:
+        Type: OPENSEARCH_SERVERLESS
+        OpensearchServerlessConfiguration:
+          CollectionArn: !Sub "arn:aws:aoss:${AWS::Region}:${AWS::AccountId}:collection/ai-agent-kb"
+          VectorIndexName: ai-agent-kb-index
+          FieldMapping:
+            VectorField: embedding
+            TextField: text
+            MetadataField: metadata
+
+  KnowledgeBaseDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      Name: ai-agent-kb-s3-source
+      KnowledgeBaseId: !Ref KnowledgeBase
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: !GetAtt KnowledgeBaseBucket.Arn
+
+  KnowledgeBaseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: hello_world/
+      Handler: agent_bedrock.knowledge_base_handler
+      Runtime: python3.12
+      Timeout: 30
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          KNOWLEDGE_BASE_ID: !Ref KnowledgeBase
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:RetrieveAndGenerate
+                - bedrock:Retrieve
+                - bedrock:InvokeModel
+              Resource: "*"
+
   BedrockAgentRole:
     Type: AWS::IAM::Role
     Properties:
@@ -72,6 +158,10 @@ Resources:
                 Action:
                   - lambda:InvokeFunction
                 Resource: !GetAtt BedrockActionFunction.Arn
+              - Effect: Allow
+                Action:
+                  - bedrock:Retrieve
+                Resource: !GetAtt KnowledgeBase.KnowledgeBaseArn
 
   BedrockAgent:
     Type: AWS::Bedrock::Agent
@@ -168,3 +258,9 @@ Outputs:
   BedrockActionFunction:
     Description: "Bedrock Action Group Lambda Function ARN"
     Value: !GetAtt BedrockActionFunction.Arn
+  KnowledgeBaseId:
+    Description: "Bedrock Knowledge Base ID"
+    Value: !Ref KnowledgeBase
+  KnowledgeBaseBucket:
+    Description: "S3 bucket for Knowledge Base documents"
+    Value: !Ref KnowledgeBaseBucket

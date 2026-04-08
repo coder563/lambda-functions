@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import boto3
 
 try:
     from hello_world.app import get_weather, calculator, get_current_time
@@ -50,6 +52,38 @@ def action_group_handler(event, context):
     except Exception as e:
         logger.error(json.dumps({"event": "action_group_error", "apiPath": api_path, "error": str(e)}))
         return _response(action_group, api_path, http_method, 500, f"Error: {e}")
+
+
+def knowledge_base_handler(event, context):
+    """
+    Queries a Bedrock Knowledge Base using retrieve_and_generate.
+    Bedrock handles the retrieval + feeds context to Claude automatically.
+    """
+    message = event.get("message") or event.get("prompt")
+    if not message or not message.strip():
+        return {"statusCode": 400, "body": "message is required"}
+
+    knowledge_base_id = os.environ.get("KNOWLEDGE_BASE_ID")
+    if not knowledge_base_id:
+        return {"statusCode": 500, "body": "KNOWLEDGE_BASE_ID env var not set"}
+
+    logger.info(json.dumps({"event": "kb_query", "message": message}))
+
+    client = boto3.client("bedrock-agent-runtime", region_name="us-east-1")
+    response = client.retrieve_and_generate(
+        input={"text": message},
+        retrieveAndGenerateConfiguration={
+            "type": "KNOWLEDGE_BASE",
+            "knowledgeBaseConfiguration": {
+                "knowledgeBaseId": knowledge_base_id,
+                "modelArn": "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0",
+            },
+        },
+    )
+
+    answer = response["output"]["text"]
+    logger.info(json.dumps({"event": "kb_query_complete", "answer": answer}))
+    return {"statusCode": 200, "body": answer}
 
 
 def _response(action_group, api_path, http_method, status_code, body):
